@@ -5,12 +5,11 @@ import matplotlib.pyplot as plt
 import numpy.random as nr
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
-import scipy.optimize as spo
 from itertools import product
 from perco_functions import tau
 
 class percoLattice:
-    def __init__(self, xdim, ydim=None, zdim=None, p=0.75, random_state=42):
+    def __init__(self, xdim, ydim=None, zdim=None, p=0.75):
         """
         Forms microclusters for all points in the graph.
     
@@ -30,7 +29,6 @@ class percoLattice:
         M.graph['Prob'] = p
         probs = np.array([p**2, p**2+p*(1-p), p**2+2*(1-p)*p, 1.0])
         nvals = [3, 2, 1, 0]
-        nr.seed(random_state)
         for x in range(1, xdim+1):
             for y in range(1, ydim+1):
                 for z in range(1, zdim+1):
@@ -43,10 +41,14 @@ class percoLattice:
                     M.node[tau(x, y, z)]['Checked'] = False
                     # Now simulates stochastic microcluster formation success.
                     rand = nr.random()
-                    accept = rand < probs
+                    accept = list(rand < probs)
+                    try:
+                        nv = nvals[accept.index(False)]
+                    except ValueError:
+                        nv = 0
                     # Returns the first False where rand falls in prob range,
                     # instead of extra lines of if-else statements.
-                    M.node[tau(x, y, z)]['value'] = nvals[accept.index(False)]
+                    M.node[tau(x, y, z)]['value'] = nv
         self.__latt = M
         self.__connected = False
     
@@ -83,24 +85,20 @@ class percoLattice:
                 prior, posterior, jump_count = node, mate, 1
                 while not connected:
                     jump_count += 1
-                    G = self.wise_chain(prior, posterior)
+                    next_node, to_continue = self.wise_chain(prior, posterior)
                     # Decides the next node to consider for a fusion to in
                     # the event of a diagonal connection.
-                    if not G[1] or G[0] == None:
+                    if not to_continue or next_node == None:
                         """Hit a boundary, no diagonal fusion possible."""
                         connected = True
                         break
                     else:
-                        prior, posterior = posterior, G[0]
+                        prior, posterior = posterior, next_node
                         self.determine_shell(posterior)
                         if prior in self.__latt.node[posterior]['shell']:
                             connected = True
-                            if self.__latt.node[posterior]['Checked']:
-                                # If this particular fusion has been
-                                # considered before, don't make again.
-                            else:
-                                rand = nr.random()
-                                if rand <= self.__p**jump_count:
+                            if not self.__latt.node[posterior]['Checked']:
+                                if nr.random() <= self.__p**jump_count:
                                     self.__latt.add_edge(node, posterior)
                             break
                         else: 
@@ -163,57 +161,55 @@ class percoLattice:
             
         
     def wise_chain(self, node, mate):
-        """Wise_chain function which works on the exact same principles as the one above except
-           convention 2 is applied where  1 (+ve x connection) & 2 (-ve x connection)
-           are coupled. Also 3 (alternating y connection) & 4 (alternating z connection) are coupled.
-           Same notation and decision flow is used here.
-        """ 
+        """
+        Procedure to determine next node in the series of lattice points to
+        consider, given the diamond/brickwork connection convention.
+        """
         # Considers the neighbouring 'mate' of the current node.
-        Xm = self.__latt.node[mate]['X']
-        Ym = self.__latt.node[mate]['Y']
-        Zm = self.__latt.node[mate]['Z']
-        Mfactor = (-1)**(Xm + Ym + Zm)
-        CONT = True
+        xm = self.__latt.node[mate]['X']
+        ym = self.__latt.node[mate]['Y']
+        zm = self.__latt.node[mate]['Z']
+        mfactor = (-1)**(xm + ym + zm)
         # There is no next unless convinced otherwise.
-        NEXT = None
-        if Xm == self.__latt.node[node]['X'] + 1:
+        to_continue, next_node = True, None
+        if xm == self.__latt.node[node]['X'] + 1:
             # If +ve 1 in the x-direction
-            if Xm == self.__xdim:
-                CONT = False
+            if xm == self.__xdim:
+                to_continue = False
             else:
-                NEXT = tau(Xm + 1, Ym, Zm)
-        elif Xm == self.__latt.node[node]['X'] - 1:
+                next_node = tau(xm + 1, ym, zm)
+        elif xm == self.__latt.node[node]['X'] - 1:
             # If -ve 1 in the x-direction
-            if Xm == 1:
+            if xm == 1:
                 # If hitting the edge of the lattice
-                CONT = False
+                to_continue = False
             else:
-                NEXT = tau(Xm - 1, Ym, Zm)
-        elif int(np.abs(self.__latt.node[node]['Y'] - Ym)) == 1:
+                next_node = tau(xm - 1, ym, zm)
+        elif int(np.abs(self.__latt.node[node]['Y'] - ym)) == 1:
             # If a positive of negative difference in the y-direction.
-            if Mfactor == 1:
-                if Zm == self.__zdim:
-                    CONT = False
+            if mfactor == 1:
+                if zm == self.__zdim:
+                    to_continue = False
                 else:
-                    NEXT = tau(Xm, Ym, Zm+1)
-            elif Mfactor == -1:
-                if Zm == 1:
-                    CONT = False
+                    next_node = tau(xm, ym, zm+1)
+            elif mfactor == -1:
+                if zm == 1:
+                    to_continue = False
                 else:
-                    NEXT = tau(Xm, Ym, Zm-1)
-        elif int(np.abs(self.__latt.node[node]['Z'] - Zm)) == 1:
+                    next_node = tau(xm, ym, zm-1)
+        elif int(np.abs(self.__latt.node[node]['Z'] - zm)) == 1:
             # If a positive of negative difference in the z-direction.
-            if Mfactor == +1:
-                if Ym == self.__ydim:
-                    CONT = False
+            if mfactor == 1:
+                if ym == self.__ydim:
+                    to_continue = False
                 else:
-                    NEXT = tau(Xm, Ym +1, Zm)
-            elif Mfactor == -1:
-                if Ym == 1:
-                    CONT = False
+                    next_node = tau(xm, ym +1, zm)
+            elif mfactor == -1:
+                if ym == 1:
+                    to_continue = False
                 else:
-                    NEXT = tau(Xm, Ym-1, Zm)
-        return [NEXT, CONT]
+                    next_node = tau(xm, ym-1, zm)
+        return next_node, to_continue
 
         
     def edge_count(self):
@@ -250,18 +246,51 @@ class percoLattice:
             mean_sq = clusters_sq/total_no
             std = np.sqrt(np.abs(mean_sq-mean**2))
             return mean, std, total_no
+        
+        
+    def directed_bonds(self, planar=False):
+        bonds = 0
+        for edge in self.__latt.edges():
+            x1,x2=self.__latt.node[edge[0]]['X'],self.__latt.node[edge[1]]['X']
+            condition = (x1 == x2) if planar else (x1 != x2)
+            if condition:
+                bonds += 1
+        if self.__latt.edges() == 0:
+            return 0
+        else:
+            return float(bonds)/self.__latt.edges()
+        
+    def shortest_path(self):
+        percolate = self.assess_percolation()
+        if percolate:
+            for y in range(1, self.__ydim +1):
+                for z in range(1, self.__zdim +1):
+                    self.__latt.add_edge(tau(1, y, z), 'Back')
+                    self.__latt.add_edge(tau(self.__xdim, y, z), 'Front')
+            length = len(nx.shortest_path(self.__latt, 'Back', 'Front')) - 2
+            self.__latt.remove_node('Back')
+            self.__latt.remove_node('Front')
+            return length
+        else:
+            return 0
+        
+    def largest_cluster(self, distribution=False):
+        sizes = []
+        for node in self.__latt.nodes():
+            if len(nx.node_connected_component(self.__latt, node)) != 1:
+               sizes.append(len(nx.node_connected_component(self.__latt,node)))
+        mx = max(sizes) if len(sizes)>0 else 0
+        if not distribution:
+            del sizes
+            return mx
+        else:
+            return sizes
     
     
     def assess_percolation(self):
         """Not for use with extendable lattices or overlap windows"""
-        front_nodes = []
-        back_nodes = []
-        # Create two panels representing the nodes at the front and 
-        # the back of the lattice
-        for y in range(1, self.__ydim + 1):
-            for z in range(1, self.__zdim + 1):
-                front_nodes.append(tau(self.__xdim, y , z))
-                back_nodes.append(tau(1, y, z))
+        # Create two panels of nodes at the front and back of lattice
+        front_nodes, back_nodes = self.panels()
         if not self.__connected:
             for node in self.__latt.nodes():
                 self.connect(node)
@@ -275,13 +304,11 @@ class percoLattice:
     
     
     def panels(self):
-        """RARELY USED (IGNORE THIS FUNCTION)
-           Sometimes used to find front/back set of nodes from which to deduce a percolation"""
+        """Create two panels of nodes at the front and back of lattice."""
         front, back = [], []
-        for z in range(1, self.__zdim + 1):
-            for y in range(1, self.__ydim + 1):
-                front.append(tau(self.__xdim, y, z))
-                back.append(tau(1, y, z))
+        for y, z in product(range(1, self.__ydim+1), range(1, self.__zdim+1)):
+            front.append(tau(self.__xdim, y , z))
+            back.append(tau(1, y, z))
         return (back, front)
     
         
@@ -319,7 +346,3 @@ class percoLattice:
         ax.set_ylabel("Y")
         ax.set_zlabel("Z")
         plt.show()
-            
-        
-    
-            
